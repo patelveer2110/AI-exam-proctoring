@@ -1,74 +1,82 @@
 import cv2
 import numpy as np
 import mediapipe as mp
+import time
 from pathlib import Path
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
 
-# ---------- Load Face Landmarker (same model as gaze) ----------
+
+# ---------- Load Model ----------
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models" / "face_landmarker.task"
 
 options = vision.FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=str(MODEL_PATH)),
-    output_face_blendshapes=True,
-    output_facial_transformation_matrixes=True,
+    output_face_blendshapes=False,
+    output_facial_transformation_matrixes=False,
     num_faces=1
 )
 
 detector = vision.FaceLandmarker.create_from_options(options)
-
 mp_image_module = mp.Image
 
 
-# ---------- Head Pose Detection Function ----------
-def detect_head_pose(frame):
-    """
-    Returns:
-        dict {
-            yaw: float,
-            pitch: float,
-            roll: float,
-            direction: str
-        }
-    """
+class HeadPoseEstimator:
+    def __init__(self):
+        self.prev_yaw = 0
+        self.alpha = 0.3  # less smoothing = faster response
 
-    h, w, _ = frame.shape
+        self.last_direction = "Straight"
+        self.direction_start_time = time.time()
 
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_image = mp_image_module(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        self.stable_count = 0
+        self.last_raw_direction = "Straight"
 
-    result = detector.detect(mp_image)
+    def smooth(self, current, previous):
+        return self.alpha * current + (1 - self.alpha) * previous
 
-    if not result.face_landmarks:
+    def get_direction(self, yaw):
+        # 🔥 Strong dead zone (ignore small movements)
+        if -15 < yaw < 15:
+            return "Straight"
+        elif yaw <= -18:
+            return "Looking Left"
+        elif yaw >= 18:
+            return "Looking Right"
+        return "Straight"
+
+def detect(self, landmarks, frame_shape):
+    h, w = frame_shape
+
+    if landmarks is None:
         return {
             "yaw": 0,
             "pitch": 0,
             "roll": 0,
-            "direction": "No Face"
+            "direction": "No Face",
+            "suspicion": 0
         }
 
-    face_landmarks = result.face_landmarks[0]
-
-    # Select important landmark indices
-    # Nose tip, chin, left eye, right eye, left mouth, right mouth
+    face_2d = []
     landmark_ids = [1, 152, 33, 263, 61, 291]
 
-    face_2d = []
-    face_3d = []
-
     for idx in landmark_ids:
-        lm = face_landmarks[idx]
-
+        lm = landmarks[idx]
         x, y = int(lm.x * w), int(lm.y * h)
-
         face_2d.append([x, y])
-        face_3d.append([x, y, lm.z])
 
     face_2d = np.array(face_2d, dtype=np.float64)
-    face_3d = np.array(face_3d, dtype=np.float64)
 
-    # Camera matrix
+    face_3d = np.array([
+        [0.0, 0.0, 0.0],
+        [0.0, -330.0, -65.0],
+        [-225.0, 170.0, -135.0],
+        [225.0, 170.0, -135.0],
+        [-150.0, -150.0, -125.0],
+        [150.0, -150.0, -125.0]
+    ], dtype=np.float64)
+
     focal_length = w
     cam_matrix = np.array([
         [focal_length, 0, w / 2],
@@ -78,32 +86,28 @@ def detect_head_pose(frame):
 
     dist_matrix = np.zeros((4, 1), dtype=np.float64)
 
-    success, rotation_vec, translation_vec = cv2.solvePnP(
+    success, rotation_vec, _ = cv2.solvePnP(
         face_3d, face_2d, cam_matrix, dist_matrix
     )
 
     rmat, _ = cv2.Rodrigues(rotation_vec)
-    angles, _, _, _, _, _ = cv2.RQDecomp3x3(rmat)
+    angles, *_ = cv2.RQDecomp3x3(rmat)
 
-    pitch = angles[0] * 360
-    yaw = angles[1] * 360
-    roll = angles[2] * 360
+    pitch, yaw, roll = angles
 
-    # -------- Direction Classification --------
-    direction = "Straight"
+    yaw = self.smooth(yaw, self.prev_yaw)
+    pitch = self.smooth(pitch, self.prev_pitch)
+    roll = self.smooth(roll, self.prev_roll)
 
-    if yaw < -10:
-        direction = "Looking Left"
-    elif yaw > 10:
-        direction = "Looking Right"
-    elif pitch < -10:
-        direction = "Looking Down"
-    elif pitch > 10:
-        direction = "Looking Up"
+    self.prev_yaw, self.prev_pitch, self.prev_roll = yaw, pitch, roll
+
+    direction = self.get_direction(yaw, pitch)
 
     return {
         "yaw": round(yaw, 2),
         "pitch": round(pitch, 2),
         "roll": round(roll, 2),
-        "direction": direction
+        "direction": direction,
+        "suspicion": 0,
+        "landmarks": landmarks
     }

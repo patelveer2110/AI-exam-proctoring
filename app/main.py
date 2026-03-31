@@ -1,12 +1,18 @@
+# from fastapi import FastAPI
+# from app.routers import video_router, audio_router, exam_router
+
+# app = FastAPI(title="AI Proctoring Backend")
+
+# app.include_router(video_router.router)
+# app.include_router(audio_router.router)
+# app.include_router(exam_router.router)
+
+# @app.get("/")
+# def root():
+#     return {"message": "AI Proctoring Server Running"}
 from fastapi import FastAPI
-from app.routers import video_router, audio_router, exam_router
+from app.api.routes import router
 
 app = FastAPI(title="AI Proctoring Backend")
 
-app.include_router(video_router.router)
-app.include_router(audio_router.router)
-app.include_router(exam_router.router)
-
-@app.get("/")
-def root():
-    return {"message": "AI Proctoring Server Running"}
+app.include_router(router)
