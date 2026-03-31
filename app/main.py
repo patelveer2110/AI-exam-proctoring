@@ -1,18 +1,24 @@
-# from fastapi import FastAPI
-# from app.routers import video_router, audio_router, exam_router
+import os
 
-# app = FastAPI(title="AI Proctoring Backend")
-
-# app.include_router(video_router.router)
-# app.include_router(audio_router.router)
-# app.include_router(exam_router.router)
-
-# @app.get("/")
-# def root():
-#     return {"message": "AI Proctoring Server Running"}
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.api.routes import router
 
 app = FastAPI(title="AI Proctoring Backend")
+
+raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:8081,http://localhost:19006",
+)
+allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(router)
