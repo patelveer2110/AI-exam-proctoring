@@ -16,8 +16,6 @@ options = vision.FaceLandmarkerOptions(
     output_facial_transformation_matrixes=False,
     num_faces=1,
 )
-
-detector = vision.FaceLandmarker.create_from_options(options)
 mp_image_module = mp.Image
 
 
@@ -27,6 +25,16 @@ class HeadPoseEstimator:
         self.prev_pitch = 0
         self.prev_roll = 0
         self.alpha = 0.3
+        self.detector = None
+        self.init_error = None
+
+        try:
+            self.detector = vision.FaceLandmarker.create_from_options(options)
+        except OSError as exc:
+            # Missing OS shared libs (common on minimal cloud images).
+            self.init_error = str(exc)
+        except Exception as exc:
+            self.init_error = str(exc)
 
     def smooth(self, current, previous):
         return self.alpha * current + (1 - self.alpha) * previous
@@ -41,6 +49,17 @@ class HeadPoseEstimator:
         return "Straight"
 
     def detect(self, frame):
+        if self.detector is None:
+            return {
+                "yaw": 0,
+                "pitch": 0,
+                "roll": 0,
+                "direction": "No Face",
+                "suspicion": 0,
+                "landmarks": None,
+                "error": self.init_error or "Face landmarker is unavailable",
+            }
+
         if frame is None:
             return {
                 "yaw": 0,
@@ -55,7 +74,7 @@ class HeadPoseEstimator:
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp_image_module(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        detection_result = detector.detect(mp_image)
+        detection_result = self.detector.detect(mp_image)
 
         if not detection_result.face_landmarks:
             return {
